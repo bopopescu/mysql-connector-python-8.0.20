@@ -29,8 +29,10 @@
 """Implements the MySQL Client/Server protocol
 """
 
+
 import struct
 import datetime
+import logging
 from decimal import Decimal
 
 from .constants import (
@@ -42,12 +44,15 @@ from .errors import DatabaseError, get_exception
 
 PROTOCOL_VERSION = 10
 
+logger = logging.getLogger('mysql-connector-python').getChild(__name__)
+
 
 class MySQLProtocol(object):
     """Implements MySQL client/server protocol
 
     Create and parses MySQL packets.
     """
+    logger = logger.getChild("MySQLProtocol")
 
     def _connect_with_db(self, client_flags, database):
         """Prepare database string for handshake response"""
@@ -100,8 +105,8 @@ class MySQLProtocol(object):
             username_bytes = username
         packet = struct.pack('<IIH{filler}{usrlen}sx'.format(
             filler='x' * 22, usrlen=len(username_bytes)),
-                             client_flags, max_allowed_packet, charset,
-                             username_bytes)
+            client_flags, max_allowed_packet, charset,
+            username_bytes)
 
         packet += self._auth_response(client_flags, username, password,
                                       database,
@@ -138,10 +143,17 @@ class MySQLProtocol(object):
     def make_auth_ssl(self, charset=45, client_flags=0,
                       max_allowed_packet=1073741824):
         """Make a SSL authentication packet"""
-        return utils.int4store(client_flags) + \
-               utils.int4store(max_allowed_packet) + \
-               utils.int2store(charset) + \
-               b'\x00' * 22
+        logger = self.logger.getChild("make_auth_ssl")
+        logger.info("start.")
+        logger.info(
+            f"call make_auth_ssl function with args charset {charset} client_flags {client_flags}")
+        buf = utils.int4store(client_flags) + \
+            utils.int4store(max_allowed_packet) + \
+            utils.int2store(charset) + \
+            b'\x00' * 22
+        logger.info(f"ssl_auth buf {buf}")
+        logger.info("complete.")
+        return buf
 
     def make_command(self, command, argument=None):
         """Make a MySQL packet containing a command"""
@@ -192,6 +204,12 @@ class MySQLProtocol(object):
 
     def parse_handshake(self, packet):
         """Parse a MySQL Handshake-packet"""
+        logger = self.logger.getChild("parse_handshake")
+        logger.info("start.")
+        logger.info(f"packet len {len(packet)} .")
+        logger.info(f"packet {packet} .")
+
+        # 解决协议的版本号部分
         res = {}
         res['protocol'] = struct_unpack('<xxxxB', packet[0:5])[0]
         if res["protocol"] != PROTOCOL_VERSION:
@@ -201,6 +219,10 @@ class MySQLProtocol(object):
         (packet, res['server_version_original']) = utils.read_string(
             packet[5:], end=b'\x00')
 
+        logger.info(f"{res} .")
+        logger.info(f"remaining packet {packet} .")
+
+        # 解析协议的第一部分(固定部分)
         (res['server_threadid'],
          auth_data1,
          capabilities1,
@@ -208,21 +230,30 @@ class MySQLProtocol(object):
          res['server_status'],
          capabilities2,
          auth_data_length
-        ) = struct_unpack('<I8sx2sBH2sBxxxxxxxxxx', packet[0:31])
+         ) = struct_unpack('<I8sx2sBH2sBxxxxxxxxxx', packet[0:31])
         res['server_version_original'] = res['server_version_original'].decode()
 
         packet = packet[31:]
+        logger.info(f"auth_data1 {auth_data1} .")
+        logger.info(f"{res} auth_data_length {auth_data_length} .")
+        logger.info(f"remaining packet {packet} .")
 
+        # 根据特性来决定如何读取 packet 的第二部分。
         capabilities = utils.intread(capabilities1 + capabilities2)
         auth_data2 = b''
         if capabilities & ClientFlag.SECURE_CONNECTION:
+            logger.info("using secure-connection")
             size = min(13, auth_data_length - 8) if auth_data_length else 13
             auth_data2 = packet[0:size]
             packet = packet[size:]
             if auth_data2[-1] == 0:
                 auth_data2 = auth_data2[:-1]
 
+            logger.info(f"auth_data2 {auth_data2} .")
+            logger.info(f"remaining packet {packet} .")
+
         if capabilities & ClientFlag.PLUGIN_AUTH:
+            logger.info("parse auth plugin.")
             if (b'\x00' not in packet
                     and res['server_version_original'].startswith("5.5.8")):
                 # MySQL server 5.5.8 has a bug where end byte is not send
@@ -236,6 +267,8 @@ class MySQLProtocol(object):
 
         res['auth_data'] = auth_data1 + auth_data2
         res['capabilities'] = capabilities
+        logger.info(f"res {res}")
+        logger.info(f"complete.")
         return res
 
     def parse_ok(self, packet):
@@ -246,7 +279,8 @@ class MySQLProtocol(object):
         ok_packet = {}
         try:
             ok_packet['field_count'] = struct_unpack('<xxxxB', packet[0:5])[0]
-            (packet, ok_packet['affected_rows']) = utils.read_lc_int(packet[5:])
+            (packet, ok_packet['affected_rows']
+             ) = utils.read_lc_int(packet[5:])
             (packet, ok_packet['insert_id']) = utils.read_lc_int(packet)
             (ok_packet['status_flag'],
              ok_packet['warning_count']) = struct_unpack('<HH', packet[0:4])
@@ -501,7 +535,8 @@ class MySQLProtocol(object):
                 values = None
             elif packet[4] == 0:
                 eof = None
-                values = self._parse_binary_values(columns, packet[5:], charset)
+                values = self._parse_binary_values(
+                    columns, packet[5:], charset)
             if eof is None and values is not None:
                 rows.append(values)
             elif eof is None and values is None:

@@ -30,6 +30,26 @@
 MySQL Connector/Python - MySQL driver written in Python
 """
 
+from .optionfiles import read_option_files
+from .dbapi import (
+    Date, Time, Timestamp, Binary, DateFromTicks,
+    TimestampFromTicks, TimeFromTicks,
+    STRING, BINARY, NUMBER, DATETIME, ROWID,
+    apilevel, threadsafety, paramstyle)
+from .constants import FieldFlag, FieldType, CharacterSet, \
+    RefreshOption, ClientFlag
+from .errors import (  # pylint: disable=W0622
+    Error, Warning, InterfaceError, DatabaseError,
+    NotSupportedError, DataError, IntegrityError, ProgrammingError,
+    OperationalError, InternalError, custom_error_exception, PoolError)
+from .constants import DEFAULT_CONFIGURATION
+from .connection import MySQLConnection
+from . import version
+import random
+
+import logging
+logger = logging.getLogger('mysql-connector-python').getChild(__name__)
+
 try:
     import _mysql_connector  # pylint: disable=F0401
     from .connection_cext import CMySQLConnection
@@ -46,25 +66,9 @@ except ImportError:
 else:
     HAVE_DNSPYTHON = True
 
-import random
-
-from . import version
-from .connection import MySQLConnection
-from .constants import DEFAULT_CONFIGURATION
-from .errors import (  # pylint: disable=W0622
-    Error, Warning, InterfaceError, DatabaseError,
-    NotSupportedError, DataError, IntegrityError, ProgrammingError,
-    OperationalError, InternalError, custom_error_exception, PoolError)
-from .constants import FieldFlag, FieldType, CharacterSet, \
-    RefreshOption, ClientFlag
-from .dbapi import (
-    Date, Time, Timestamp, Binary, DateFromTicks,
-    TimestampFromTicks, TimeFromTicks,
-    STRING, BINARY, NUMBER, DATETIME, ROWID,
-    apilevel, threadsafety, paramstyle)
-from .optionfiles import read_option_files
 
 _CONNECTION_POOLS = {}
+
 
 def _get_pooled_connection(**kwargs):
     """Return a pooled MySQL connection"""
@@ -143,9 +147,9 @@ def _get_failover_connection(**kwargs):
                 "100, got : {}".format(server["priority"]))
 
     if 0 < priority_count < len(failover):
-            raise ProgrammingError("You must either assign no priority to any "
-                                   "of the routers or give a priority for "
-                                   "every router")
+        raise ProgrammingError("You must either assign no priority to any "
+                               "of the routers or give a priority for "
+                               "every router")
 
     failover.sort(key=lambda x: x['priority'], reverse=True)
 
@@ -189,6 +193,10 @@ def connect(*args, **kwargs):
     Returns MySQLConnection or PooledMySQLConnection.
     """
     # DNS SRV
+    lgr = logger.getChild("connect")
+    lgr.info("start.")
+    lgr.info(f"call connect function with *args {args} kwargs {kwargs}.")
+
     dns_srv = kwargs.pop('dns_srv') if 'dns_srv' in kwargs else False
 
     if not isinstance(dns_srv, bool):
@@ -262,7 +270,12 @@ def connect(*args, **kwargs):
 
     if HAVE_CEXT and not use_pure:
         return CMySQLConnection(*args, **kwargs)
+
+    lgr.info("create MySQLConnection instance.")
+    lgr.info("compelet.")
     return MySQLConnection(*args, **kwargs)
+
+
 Connect = connect  # pylint: disable=C0103
 
 __version_info__ = version.VERSION
@@ -290,4 +303,4 @@ __all__ = [
 
     # C Extension
     'CMySQLConnection',
-    ]
+]

@@ -28,6 +28,14 @@
 
 """Module gathering all abstract base classes"""
 
+import logging
+from . import errors
+from .optionfiles import MySQLOptionsParser
+from .constants import (ClientFlag, CharacterSet, CONN_ATTRS_DN,
+                        DEFAULT_CONFIGURATION, OPENSSL_CS_NAMES,
+                        TLS_CIPHER_SUITES, TLS_VERSIONS)
+from .conversion import MySQLConverterBase
+from .catch23 import make_abc, BYTE_TYPES, STRING_TYPES
 from abc import ABCMeta, abstractmethod, abstractproperty
 import re
 import time
@@ -35,19 +43,12 @@ import weakref
 TLS_V1_3_SUPPORTED = False
 try:
     import ssl
-    if hasattr(ssl, "HAS_TLSv1_3") and ssl.HAS_TLSv1_3: 
+    if hasattr(ssl, "HAS_TLSv1_3") and ssl.HAS_TLSv1_3:
         TLS_V1_3_SUPPORTED = True
 except:
     # If import fails, we don't have SSL support.
     pass
 
-from .catch23 import make_abc, BYTE_TYPES, STRING_TYPES
-from .conversion import MySQLConverterBase
-from .constants import (ClientFlag, CharacterSet, CONN_ATTRS_DN,
-                        DEFAULT_CONFIGURATION, OPENSSL_CS_NAMES,
-                        TLS_CIPHER_SUITES, TLS_VERSIONS)
-from .optionfiles import MySQLOptionsParser
-from . import errors
 
 NAMED_TUPLE_CACHE = weakref.WeakValueDictionary()
 
@@ -62,10 +63,14 @@ TLS_VER_NO_SUPPORTED = ("No supported TLS protocol version found in the "
                         "'tls-versions' list '{}'. ")
 
 
+logger = logging.getLogger('mysql-connector-python').getChild(__name__)
+
+
 @make_abc(ABCMeta)
 class MySQLConnectionAbstract(object):
 
     """Abstract class for classes connecting to a MySQL server"""
+    logger = logger.getChild("MySQLConnectionAbstract")
 
     def __init__(self, **kwargs):
         """Initialize"""
@@ -167,7 +172,8 @@ class MySQLConnectionAbstract(object):
             for option, value in config_options.items():
                 if option not in config:
                     try:
-                        config[option] = eval(value[0])  # pylint: disable=W0123
+                        config[option] = eval(
+                            value[0])  # pylint: disable=W0123
                     except (NameError, SyntaxError):
                         config[option] = value[0]
         return config
@@ -206,7 +212,7 @@ class MySQLConnectionAbstract(object):
                 "ciphersuites. Found: '{}'".format(tls_cs))
 
         tls_versions = TLS_VERSIONS[:] if self._ssl.get("tls_versions", None) \
-           is None else self._ssl["tls_versions"][:]
+            is None else self._ssl["tls_versions"][:]
 
         # A newer TLS version can use a cipher introduced on
         # an older version.
@@ -214,7 +220,7 @@ class MySQLConnectionAbstract(object):
         newer_tls_ver = tls_versions[0]
         # translated_names[0] belongs to TLSv1, TLSv1.1 and TLSv1.2
         # translated_names[1] are TLSv1.3 only
-        translated_names = [[],[]]
+        translated_names = [[], []]
         iani_cipher_suites_names = {}
         ossl_cipher_suites_names = []
 
@@ -279,8 +285,8 @@ class MySQLConnectionAbstract(object):
                                 list="tls_versions", value=tls_version))
                         tls_versions.append(tls_version)
                 if tls_vers == ["TLSv1.3"] and not TLS_V1_3_SUPPORTED:
-                        raise AttributeError(
-                            TLS_VER_NO_SUPPORTED.format(tls_version, TLS_VERSIONS))
+                    raise AttributeError(
+                        TLS_VER_NO_SUPPORTED.format(tls_version, TLS_VERSIONS))
         elif isinstance(tls_version, list):
             if not tls_version:
                 raise AttributeError(
@@ -358,9 +364,18 @@ class MySQLConnectionAbstract(object):
         This method allows you to configure the MySQLConnection instance.
 
         Raises on errors.
+
+        根据 kwargs 的值来设置 self 的相关属性。
         """
+        logger = self.logger.getChild("config")
+        logger.info("start.")
+        logger.info(f"call config function with kwargs {kwargs}.")
+
+        # 多数据情况下 kwargs = {'host': '127.0.0.1', 'port': 3306, 'user': 'appuser', 'password': '123456'}
         config = kwargs.copy()
         if 'dsn' in config:
+            # 感觉应该是官方写错了，dns
+            # 多数情况下 dsn 不在 config 字典中。
             raise errors.NotSupportedError("Data source name is not supported")
 
         # Read option files
@@ -582,6 +597,8 @@ class MySQLConnectionAbstract(object):
 
         if self._client_flags & ClientFlag.CONNECT_ARGS:
             self._add_default_conn_attrs()
+
+        logger.info("complete.")
 
     def _add_default_conn_attrs(self):
         """Add the default connection attributes."""
@@ -807,7 +824,6 @@ class MySQLConnectionAbstract(object):
         self._raise_on_warnings = value
         self._get_warnings = value
 
-
     @property
     def unread_result(self):
         """Get whether there is an unread result
@@ -889,7 +905,7 @@ class MySQLConnectionAbstract(object):
                     "charset should be either integer, string or None")
         elif collation:
             (self._charset_id, charset_name, collation_name) = \
-                    CharacterSet.get_charset_info(collation=collation)
+                CharacterSet.get_charset_info(collation=collation)
 
         self._execute_query("SET NAMES '{0}' COLLATE '{1}'".format(
             charset_name, collation_name))
@@ -953,15 +969,24 @@ class MySQLConnectionAbstract(object):
         arguments are given, it will use the already configured or default
         values.
         """
+        logger = self.logger.getChild("connect")
+        logger.info("start.")
+        logger.info(f"call connect with kwargs {kwargs}.")
         if kwargs:
             self.config(**kwargs)
 
+        logger.info("prepare call disconnect function.")
         self.disconnect()
+
+        logger.info("prepare call _open_connection function.")
         self._open_connection()
         # Server does not allow to run any other statement different from ALTER
         # when user's password has been expired.
         if not self._client_flags & ClientFlag.CAN_HANDLE_EXPIRED_PASSWORDS:
+            logger.info("prepare call _post_connection function.")
             self._post_connection()
+
+        logger.info("complete.")
 
     def reconnect(self, attempts=1, delay=0):
         """Attempt to reconnect to the MySQL server
@@ -1224,6 +1249,7 @@ class MySQLCursorAbstract(object):
     Abstract class defining cursor class with method and members
     required by the Python Database API Specification v2.0.
     """
+
     def __init__(self):
         """Initialization"""
         self._description = None

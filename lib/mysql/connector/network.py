@@ -35,6 +35,7 @@ import socket
 import struct
 import sys
 import zlib
+import logging
 
 try:
     import ssl
@@ -47,7 +48,7 @@ try:
         TLS_VERSIONS["TLSv1.3"] = ssl.PROTOCOL_TLS  # pylint: disable=E1101
     else:
         TLS_VERSIONS["TLSv1.3"] = ssl.PROTOCOL_SSLv23  # Alias of PROTOCOL_TLS
-    if hasattr(ssl, "HAS_TLSv1_3") and ssl.HAS_TLSv1_3: 
+    if hasattr(ssl, "HAS_TLSv1_3") and ssl.HAS_TLSv1_3:
         TLS_V1_3_SUPPORTED = True
     else:
         TLS_V1_3_SUPPORTED = False
@@ -59,6 +60,8 @@ except:
 from . import constants, errors
 from .errors import InterfaceError
 from .catch23 import PY2, init_bytearray, struct_unpack
+
+logger = logging.getLogger('mysql-connector-python').getChild(__name__)
 
 
 def _strioerror(err):
@@ -95,6 +98,7 @@ class BaseMySQLSocket(object):
       mysql.connector.network.MySQLTCPSocket
       mysql.connector.network.MySQLUnixSocket
     """
+    logger = logger.getChild("BaseMySQLSocket")
 
     def __init__(self):
         self.sock = None  # holds the socket connection
@@ -235,7 +239,8 @@ class BaseMySQLSocket(object):
             if pllen > 50:
                 zbuf = zlib.compress(pkt)
                 zpkts.append(struct.pack('<I', len(zbuf))[0:3]
-                             + struct.pack('<B', self._compressed_packet_number)
+                             + struct.pack('<B',
+                                           self._compressed_packet_number)
                              + struct.pack('<I', pllen)[0:3]
                              + zbuf)
             else:
@@ -257,6 +262,8 @@ class BaseMySQLSocket(object):
 
     def recv_plain(self):
         """Receive packets from the MySQL server"""
+        logger = self.logger.getChild("recv_plain")
+        logger.info("start.")
         try:
             # Read the header of the MySQL packet, 4 bytes
             packet = bytearray(b'')
@@ -292,6 +299,8 @@ class BaseMySQLSocket(object):
         except IOError as err:
             raise errors.OperationalError(
                 errno=2055, values=(self.get_address(), _strioerror(err)))
+
+        logger.info("complete.")
 
     def recv_py26_plain(self):
         """Receive packets from the MySQL server"""
@@ -338,7 +347,8 @@ class BaseMySQLSocket(object):
                     "<I",
                     packet_bunch[0:3] + b'\x00')[0]  # pylint: disable=E0602
             else:
-                payload_length = struct.unpack("<I", packet_bunch[0:3] + b'\x00')[0]
+                payload_length = struct.unpack(
+                    "<I", packet_bunch[0:3] + b'\x00')[0]
 
             self._packet_queue.append(packet_bunch[0:payload_length + 4])
             packet_bunch = packet_bunch[payload_length + 4:]
@@ -409,7 +419,8 @@ class BaseMySQLSocket(object):
         for payload_length, payload in packets:
             # payload_length can not be 0; this was previously handled
             if PY2:
-                tmp += zlib.decompress(buffer(payload))  # pylint: disable=E0602
+                tmp += zlib.decompress(buffer(payload)
+                                       )  # pylint: disable=E0602
             else:
                 tmp += zlib.decompress(payload)
         self._split_zipped_payload(tmp)
@@ -543,7 +554,7 @@ class MySQLUnixSocket(BaseMySQLSocket):
 
     def open_connection(self):
         try:
-            self.sock = socket.socket(socket.AF_UNIX, # pylint: disable=E1101
+            self.sock = socket.socket(socket.AF_UNIX,  # pylint: disable=E1101
                                       socket.SOCK_STREAM)
             self.sock.settimeout(self._connection_timeout)
             self.sock.connect(self.unix_socket)
@@ -559,13 +570,20 @@ class MySQLTCPSocket(BaseMySQLSocket):
 
     Opens a TCP/IP connection to the MySQL Server.
     """
+    logger = logger.getChild("MySQLTCPSocket")
 
     def __init__(self, host='127.0.0.1', port=3306, force_ipv6=False):
+        logger = self.logger.getChild("__init__")
+        logger.info("start.")
+        logger.info(
+            f"call __init__ with args host {host} port {port} force_ipv6 {force_ipv6}")
         super(MySQLTCPSocket, self).__init__()
         self.server_host = host
         self.server_port = port
         self.force_ipv6 = force_ipv6
         self._family = 0
+
+        logger.info("complete.")
 
     def get_address(self):
         return "{0}:{1}".format(self.server_host, self.server_port)
@@ -573,6 +591,8 @@ class MySQLTCPSocket(BaseMySQLSocket):
     def open_connection(self):
         """Open the TCP/IP connection to the MySQL server
         """
+        logger = self.logger.getChild("open_connection")
+        logger.info("start.")
         # Get address information
         addrinfo = [None] * 5
         try:
@@ -600,6 +620,7 @@ class MySQLTCPSocket(BaseMySQLSocket):
             (self._family, socktype, proto, _, sockaddr) = addrinfo
 
         # Instanciate the socket and connect
+        logger.info("create socket object refered by self.sock.")
         try:
             self.sock = socket.socket(self._family, socktype, proto)
             self.sock.settimeout(self._connection_timeout)
@@ -609,3 +630,5 @@ class MySQLTCPSocket(BaseMySQLSocket):
                 errno=2003, values=(self.get_address(), _strioerror(err)))
         except Exception as err:
             raise errors.OperationalError(str(err))
+
+        logger.info("complete.")

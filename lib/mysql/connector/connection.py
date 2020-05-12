@@ -54,13 +54,24 @@ from .protocol import MySQLProtocol
 from .utils import int4store, linux_distribution
 from .abstracts import MySQLConnectionAbstract
 
+import logging
+logger = logging.getLogger('mysql-connector-python').getChild(__name__)
+
 
 class MySQLConnection(MySQLConnectionAbstract):
     """Connection to a MySQL Server"""
+    logger = logger.getChild("MySQLConnection")
+
     def __init__(self, *args, **kwargs):
+        logger = self.logger.getChild("__init__")
+        logger.info("start.")
+        logger.info(
+            f"call __init__ function with args {args}  kwargs {kwargs}.")
+
         self._protocol = None
         self._socket = None
         self._handshake = None
+        logger.info("prepare call super.__init__ function.")
         super(MySQLConnection, self).__init__(*args, **kwargs)
 
         self._converter_class = MySQLConverter
@@ -107,6 +118,7 @@ class MySQLConnection(MySQLConnectionAbstract):
                 self.close()
                 self._socket = None
                 raise
+        logger.info("complete.")
 
     def _add_default_conn_attrs(self):
         """Add the default connection attributes."""
@@ -143,10 +155,14 @@ class MySQLConnection(MySQLConnectionAbstract):
 
     def _do_handshake(self):
         """Get the handshake from the MySQL server"""
+        logger = self.logger.getChild("_do_handshake")
+        logger.info("start.")
+
         packet = self._socket.recv()
         if packet[4] == 255:
             raise errors.get_exception(packet)
 
+        # 接收 parser 完成之后的握手包.
         self._handshake = None
         try:
             handshake = self._protocol.parse_handshake(packet)
@@ -155,21 +171,27 @@ class MySQLConnection(MySQLConnectionAbstract):
             raise errors.get_mysql_exception(msg=err.msg, errno=err.errno,
                                              sqlstate=err.sqlstate)
 
+        # 从握手包中取出服务端的版本号
         self._server_version = self._check_server_version(
             handshake['server_version_original'])
 
+        # 根据特性标识决定是否使用 SSL
         if not handshake['capabilities'] & ClientFlag.SSL:
+            logger.info("using ssl mode.")
             self._client_flags &= ~ClientFlag.SSL
             if self._ssl.get('verify_cert'):
                 raise errors.InterfaceError("SSL is required but the server "
                                             "doesn't support it", errno=2026)
         elif not self._ssl_disabled:
+            logger.info("skip ssl mode.")
             self._client_flags |= ClientFlag.SSL
 
         if handshake['capabilities'] & ClientFlag.PLUGIN_AUTH:
             self.set_client_flags([ClientFlag.PLUGIN_AUTH])
 
+        # self._handshake 引用握手包
         self._handshake = handshake
+        logger.info("complete.")
 
     def _do_auth(self, username=None, password=None, database=None,
                  client_flags=0, charset=45, ssl_options=None, conn_attrs=None):
@@ -182,13 +204,21 @@ class MySQLConnection(MySQLConnectionAbstract):
         Raises NotSupportedError when we get the old, insecure password
         reply back. Raises any error coming from MySQL.
         """
+        logger = self.logger.getChild("_do_auth")
+        logger.info("start.")
+        logger.info(
+            f"call _do_auth with args username {username} password {password} database {database}")
+
+        # 先标记为不使用 ssl ，如果客户端支持，然后在标记为 true.
         self._ssl_active = False
         if client_flags & ClientFlag.SSL:
             packet = self._protocol.make_auth_ssl(charset=charset,
                                                   client_flags=client_flags)
+            logger.info(f"ssl connection request packet {packet}")
             self._socket.send(packet)
             if ssl_options.get('tls_ciphersuites') is not None:
-                tls_ciphersuites = ":".join(ssl_options.get('tls_ciphersuites'))
+                tls_ciphersuites = ":".join(
+                    ssl_options.get('tls_ciphersuites'))
             else:
                 tls_ciphersuites = ""
             self._socket.switch_to_ssl(ssl_options.get('ca'),
@@ -264,6 +294,9 @@ class MySQLConnection(MySQLConnectionAbstract):
 
         Returns subclass of MySQLBaseSocket.
         """
+        logger = self.logger.getChild("_get_connection")
+        logger.info("start.")
+        logger.info(f"self.unix_socket = {self.unix_socket}")
         conn = None
         if self.unix_socket and os.name != 'nt':
             conn = MySQLUnixSocket(unix_socket=self.unix_socket)
@@ -273,6 +306,7 @@ class MySQLConnection(MySQLConnectionAbstract):
                                   force_ipv6=self._force_ipv6)
 
         conn.set_connection_timeout(self._connection_timeout)
+        logger.info("complete.")
         return conn
 
     def _open_connection(self):
@@ -282,11 +316,24 @@ class MySQLConnection(MySQLConnectionAbstract):
 
         Raises on errors.
         """
+        logger = self.logger.getChild("_open_connection")
+        logger.info("start.")
+
+        logger.info("create MySQLProtocol object.")
         self._protocol = MySQLProtocol()
+
+        logger.info("prepare call _get_connection function.")
+        # self._socket 实现上是一个 MySQLTCPSocket 对象。
         self._socket = self._get_connection()
+
         try:
+            logger.info("prepare call self._socket.open_connection function.")
+            # open_connection 会让 MySQLTCPSocket 对象内部的 socket 连接上 MySQL-Server
             self._socket.open_connection()
+
+            logger.info("prepare call self._do_handshake")
             self._do_handshake()
+            logger.info("prepare call self._do_auth")
             self._do_auth(self._user, self._password,
                           self._database, self._client_flags, self._charset_id,
                           self._ssl, self._conn_attrs)
@@ -312,14 +359,20 @@ class MySQLConnection(MySQLConnectionAbstract):
 
     def close(self):
         """Disconnect from the MySQL server"""
+        logger = self.logger.getChild("disconnect")
+        logger.info("start.")
+
         if not self._socket:
             return
 
         try:
+            logger.info("prepare call cmd_quit function")
             self.cmd_quit()
         except (AttributeError, errors.Error):
             pass  # Getting an exception would mean we are disconnected.
         self._socket.close_connection()
+
+        logger.info("complete.")
 
     disconnect = close
 
@@ -490,7 +543,7 @@ class MySQLConnection(MySQLConnectionAbstract):
         if not column_count or not isinstance(column_count, int):
             raise errors.InterfaceError('Illegal result set.')
 
-        self._columns_desc = [None,] * column_count
+        self._columns_desc = [None, ] * column_count
         for i in range(0, column_count):
             self._columns_desc[i] = self._protocol.parse_column(
                 self._socket.recv(), self.python_charset)
