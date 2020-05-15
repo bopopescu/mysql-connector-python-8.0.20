@@ -76,17 +76,26 @@ def _strioerror(err):
 
 def _prepare_packets(buf, pktnr):
     """Prepare a packet for sending to the MySQL server"""
+    lgr = logger.getChild("_prepare_packets")
+    lgr.info("start.")
+    lgr.info("call _prepare_packets function with pktnr {pktnr}.")
+    # 定义好分组
     pkts = []
     pllen = len(buf)
     maxpktlen = constants.MAX_PACKET_LENGTH
+
+    # 对于超过最大包长的部分，每次都要 16M
     while pllen > maxpktlen:
         pkts.append(b'\xff\xff\xff' + struct.pack('<B', pktnr)
                     + buf[:maxpktlen])
         buf = buf[maxpktlen:]
         pllen = len(buf)
         pktnr = pktnr + 1
+    # 小于最大包长的时候取最大的包长
     pkts.append(struct.pack('<I', pllen)[0:3]
                 + struct.pack('<B', pktnr) + buf)
+    lgr.info("complete.")
+    # 返回包后的数组
     return pkts
 
 
@@ -155,16 +164,24 @@ class BaseMySQLSocket(object):
     def send_plain(self, buf, packet_number=None,
                    compressed_packet_number=None):
         """Send packets to the MySQL server"""
+        logger = self.logger.getChild("send_plain")
+        logger.info("start.")
+        logger.info(
+            f"call send function with packet_number = {packet_number} compressed_packet_number {compressed_packet_number}.")
         if packet_number is None:
             self.next_packet_number  # pylint: disable=W0104
+            logger.info(f"use default packet_number {self._packet_number}.")
         else:
             self._packet_number = packet_number
+        # 交由 _prepare_packets 进行分包
+        logger.info("prepare call _prepare_packets function.")
         packets = _prepare_packets(buf, self._packet_number)
         for packet in packets:
             try:
                 if PY2:
                     self.sock.sendall(buffer(packet))  # pylint: disable=E0602
                 else:
+                    # 同步的发送数据包。
                     self.sock.sendall(packet)
             except IOError as err:
                 raise errors.OperationalError(

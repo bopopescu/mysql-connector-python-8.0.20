@@ -89,6 +89,8 @@ class MySQLProtocol(object):
                   auth_plugin=None, conn_attrs=None):
         """Make a MySQL Authentication packet"""
 
+        # 生成 HandshakeResponse41 响应包
+
         try:
             auth_data = handshake['auth_data']
             auth_plugin = auth_plugin or handshake['auth_plugin']

@@ -212,10 +212,12 @@ class MySQLConnection(MySQLConnectionAbstract):
         # 先标记为不使用 ssl ，如果客户端支持，然后在标记为 true.
         self._ssl_active = False
         if client_flags & ClientFlag.SSL:
+            # 创建 ssl connection requests 包
             packet = self._protocol.make_auth_ssl(charset=charset,
                                                   client_flags=client_flags)
             logger.info(f"ssl connection request packet {packet}")
             self._socket.send(packet)
+            # 默认 ssl_options 是一个空的集合
             if ssl_options.get('tls_ciphersuites') is not None:
                 tls_ciphersuites = ":".join(
                     ssl_options.get('tls_ciphersuites'))
@@ -231,6 +233,7 @@ class MySQLConnection(MySQLConnectionAbstract):
                                        ssl_options.get('tls_versions'))
             self._ssl_active = True
 
+        logger.info("make auth packet.")
         packet = self._protocol.make_auth(
             handshake=self._handshake,
             username=username, password=password, database=database,
@@ -239,6 +242,9 @@ class MySQLConnection(MySQLConnectionAbstract):
             auth_plugin=self._auth_plugin,
             conn_attrs=conn_attrs)
         self._socket.send(packet)
+        #
+        logger.info(
+            f"prepare call _auth_switch_request function with username '{username}' password '{password}' ")
         self._auth_switch_request(username, password)
 
         if not (client_flags & ClientFlag.CONNECT_WITH_DB) and database:
